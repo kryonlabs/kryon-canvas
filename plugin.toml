@@ -1,0 +1,24 @@
+[plugin]
+name = "canvas"
+version = "1.0.0"
+description = "Love2D-inspired immediate mode canvas drawing for Kryon"
+license = "0BSD"
+repository = "https://github.com/kryon-plugins/canvas"
+
+[compatibility]
+kryon_version = ">=0.3.0"
+api_version = "1.0"
+
+[capabilities]
+command_ids = [100, 101, 102]
+backends = ["sdl3", "terminal", "web"]
+features = ["immediate_mode", "love2d_api", "vector_graphics"]
+
+[build]
+c_sources = ["src/*.c"]
+c_headers = ["include/kryon_canvas.h", "include/canvas_plugin.h"]
+dependencies = ["sdl3", "freetype", "harfbuzz"]
+
+[bindings]
+nim = true
+lua = true

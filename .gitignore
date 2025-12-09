@@ -1,0 +1,39 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# Nim compiler cache
+nimcache/
+@m*.nim.c
+@m*.nim.c.o
+
+# Compiled binaries
+examples/nim/simple_drawing
+examples/nim/colors_demo
+examples/nim/patterns_demo
+examples/nim/shapes_demo
+examples/nim/canvas_test
+examples/nim/test_*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Generated files
+*.kir
+*.kirb
+build/ir/
+
+# Logs
+*.log
