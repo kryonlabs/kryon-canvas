@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "../../core/include/kryon.h"
+#include "kryon.h"
 
 #ifdef __cplusplus
 extern "C" {

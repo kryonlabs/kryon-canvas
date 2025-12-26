@@ -4,9 +4,9 @@
 
 #define _USE_MATH_DEFINES
 #include "canvas_plugin.h"
-#include "../../ir/ir_plugin.h"
-#include "../../ir/ir_builder.h"
-#include "../../core/include/kryon_canvas.h"
+#include "kryon_canvas.h"
+#include "ir_plugin.h"
+#include "ir_builder.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>

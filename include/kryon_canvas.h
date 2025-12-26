@@ -233,7 +233,7 @@ bool kryon_canvas_triangulate_polygon(const kryon_fp_t* vertices, uint16_t verte
 #endif
 
 // Default circle segments for tessellation
-#define KRYON_DEFAULT_CIRCLE_SEGMENTS 16  // Must match polygon vertex limit
+#define KRYON_DEFAULT_CIRCLE_SEGMENTS 32  // Smooth circles (polygon limit is now 64)
 
 // Helper macros for common colors
 #define KRYON_COLOR_RED     0xFF0000FF

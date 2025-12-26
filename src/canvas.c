@@ -308,9 +308,6 @@ bool kryon_pop_transform(kryon_cmd_buf_t* buf) {
 
 bool kryon_draw_polygon(kryon_cmd_buf_t* buf, const kryon_fp_t* vertices, uint16_t vertex_count,
                        uint32_t color, bool filled) {
-    // Always debug entry to see if function is called
-    fprintf(stderr, "[kryon][cmdbuf] ENTRY: kryon_draw_polygon called with vertex_count=%d\n", vertex_count);
-
     if (buf == NULL || vertices == NULL || vertex_count < 3) {
         fprintf(stderr, "[kryon][cmdbuf] ERROR: buf=%p vertices=%p vertex_count=%d\n",
                 (void*)buf, (void*)vertices, vertex_count);
@@ -318,8 +315,8 @@ bool kryon_draw_polygon(kryon_cmd_buf_t* buf, const kryon_fp_t* vertices, uint16
     }
 
     // Limit vertex count to prevent buffer overflow
-    if (vertex_count > 16) {
-        fprintf(stderr, "[kryon][cmdbuf] ERROR: Too many vertices (%d), max supported is 16\n", vertex_count);
+    if (vertex_count > 64) {
+        fprintf(stderr, "[kryon][cmdbuf] ERROR: Too many vertices (%d), max supported is 64\n", vertex_count);
         return false;
     }
 
@@ -335,8 +332,8 @@ bool kryon_draw_polygon(kryon_cmd_buf_t* buf, const kryon_fp_t* vertices, uint16
     uint16_t num_floats = vertex_count * 2; // x,y pairs
 
     // Cap at our storage size to prevent buffer overflow
-    if (vertex_count > 16 || num_floats > 32) {
-        fprintf(stderr, "[kryon][cmdbuf] ERROR: Too many vertices (%d), max supported is 16\n", vertex_count);
+    if (vertex_count > 64 || num_floats > 128) {
+        fprintf(stderr, "[kryon][cmdbuf] ERROR: Too many vertices (%d), max supported is 64\n", vertex_count);
         return false;
     }
 
