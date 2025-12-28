@@ -453,4 +453,7 @@ function canvas.shutdown()
   C.kryon_canvas_plugin_shutdown()
 end
 
+-- Auto-initialize the plugin when the module is loaded
+canvas.init()
+
 return canvas

@@ -267,28 +267,63 @@ static void canvas_component_renderer_sdl3(void* backend_ctx, const IRComponent*
     SDL_Renderer* renderer = (SDL_Renderer*)ctx->renderer;
     TTF_Font* font = (TTF_Font*)ctx->font;
 
-    // Initialize canvas for this component's bounds
-    extern void kryon_cmd_buf_init(kryon_cmd_buf_t* buf);
-    extern void kryon_cmd_buf_clear(kryon_cmd_buf_t* buf);
-    extern void kryon_canvas_set_command_buffer(kryon_cmd_buf_t* buf);
+    // CRITICAL FIX: Set rendered bounds for hit testing
+    // Cast away const - this is a rendering-time side effect needed for interaction
+    IRComponent* mutable_comp = (IRComponent*)component;
+    ir_set_rendered_bounds(mutable_comp, x, y, width, height);
 
-    static kryon_cmd_buf_t canvas_buffer;
-    static bool buffer_initialized = false;
+    fprintf(stderr, "[canvas_plugin] Set rendered bounds: [%.1f, %.1f, %.1f, %.1f] for component %u\n",
+            x, y, width, height, component->id);
 
-    if (!buffer_initialized) {
-        kryon_cmd_buf_init(&canvas_buffer);
-        buffer_initialized = true;
-        fprintf(stderr, "[canvas_plugin] Initialized canvas command buffer\n");
+    // DEBUG: Check SDL renderer state
+    fprintf(stderr, "[canvas_plugin] DEBUG: renderer=%p font=%p\n", (void*)renderer, (void*)font);
+
+    // Check if we can get the output size
+    int w, h;
+    if (SDL_GetRenderOutputSize(renderer, &w, &h)) {
+        fprintf(stderr, "[canvas_plugin] SDL_GetRenderOutputSize succeeded: %dx%d\n", w, h);
     } else {
-        kryon_cmd_buf_clear(&canvas_buffer);
+        fprintf(stderr, "[canvas_plugin] SDL_GetRenderOutputSize FAILED: %s\n", SDL_GetError());
     }
 
-    kryon_canvas_set_command_buffer(&canvas_buffer);
+    // TEST: Draw a bright red rectangle to verify SDL rendering works
+    SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+    SDL_FRect test_rect = {x, y, 100, 100};
+    bool fill_result = SDL_RenderFillRect(renderer, &test_rect);
+    fprintf(stderr, "[canvas_plugin] TEST: SDL_RenderFillRect result=%d (should be true=1) at (%.1f,%.1f,100x100)\n",
+            fill_result, x, y);
+    if (!fill_result) {
+        fprintf(stderr, "[canvas_plugin] SDL_RenderFillRect FAILED: %s\n", SDL_GetError());
+    }
+
+    // Draw canvas background FIRST (before any canvas content)
+    if (component->style) {
+        uint8_t bg_r, bg_g, bg_b, bg_a;
+        extern bool ir_color_resolve(const void* color, uint8_t* r, uint8_t* g, uint8_t* b, uint8_t* a);
+        if (ir_color_resolve(&component->style->background, &bg_r, &bg_g, &bg_b, &bg_a)) {
+            SDL_SetRenderDrawColor(renderer, bg_r, bg_g, bg_b, bg_a);
+            SDL_FRect bg_rect = {x, y, width, height};
+            SDL_RenderFillRect(renderer, &bg_rect);
+            fprintf(stderr, "[canvas_plugin] Drew canvas background: rgba(%d,%d,%d,%d) at (%.1f,%.1f,%.1fx%.1f)\n",
+                    bg_r, bg_g, bg_b, bg_a, x, y, width, height);
+        }
+    }
+
+    // Canvas buffer is now initialized during plugin init
+    // Just set the canvas dimensions and offset for this component
     kryon_canvas_init((uint16_t)width, (uint16_t)height);
     kryon_canvas_set_offset(x, y);
 
+    // Set clipping rectangle to canvas bounds - all rendering will be clipped to this area
+    SDL_Rect clip_rect = {(int)x, (int)y, (int)width, (int)height};
+    SDL_SetRenderClipRect(renderer, &clip_rect);
+
     // Invoke callback bridge to run user's onDraw callback
-    ir_plugin_dispatch_callback(component->type, component->id);
+    // For Lua: This returns false (no bridge), desktop renderer already invoked callback
+    // For Nim: This returns true and executes the callback here
+    if (!ir_plugin_dispatch_callback(component->type, component->id)) {
+        fprintf(stderr, "[canvas_plugin] No callback bridge (Lua mode - callback handled by desktop renderer)\n");
+    }
 
     // Execute canvas commands using SDL3
     kryon_cmd_buf_t* canvas_buf = kryon_canvas_get_command_buffer();
@@ -303,8 +338,12 @@ static void canvas_component_renderer_sdl3(void* backend_ctx, const IRComponent*
     kryon_cmd_iterator_t iter = kryon_cmd_iter_create(canvas_buf);
     kryon_command_t cmd;
 
+    fprintf(stderr, "[canvas_plugin] Starting canvas command iteration, buf=%p\n", (void*)canvas_buf);
+
     while (kryon_cmd_iter_has_next(&iter)) {
         if (!kryon_cmd_iter_next(&iter, &cmd)) break;
+
+        fprintf(stderr, "[canvas_plugin] Processing canvas command type=%d\n", cmd.type);
 
         switch (cmd.type) {
             case KRYON_CMD_DRAW_POLYGON: {
@@ -313,6 +352,9 @@ static void canvas_component_renderer_sdl3(void* backend_ctx, const IRComponent*
                 uint32_t color = cmd.data.draw_polygon.color;
                 bool filled = cmd.data.draw_polygon.filled;
 
+                fprintf(stderr, "[canvas_plugin] Rendering POLYGON: vertices=%d color=0x%08x filled=%d\n",
+                        vertex_count, color, filled);
+
                 if (filled && vertex_count >= 3) {
                     // Draw filled polygon using triangle fan
                     uint8_t r = (color >> 24) & 0xFF;
@@ -320,32 +362,63 @@ static void canvas_component_renderer_sdl3(void* backend_ctx, const IRComponent*
                     uint8_t b = (color >> 8) & 0xFF;
                     uint8_t a = color & 0xFF;
 
+                    fprintf(stderr, "[SDL3_POLYGON] Drawing filled polygon: vertices=%d RGBA=(%d,%d,%d,%d)\n",
+                            vertex_count, r, g, b, a);
+
                     SDL_Vertex* sdl_vertices = malloc(vertex_count * sizeof(SDL_Vertex));
                     for (uint16_t i = 0; i < vertex_count; i++) {
-                        sdl_vertices[i].position.x = vertices[i * 2];
-                        sdl_vertices[i].position.y = vertices[i * 2 + 1];
+                        sdl_vertices[i].position.x = x + vertices[i * 2];
+                        sdl_vertices[i].position.y = y + vertices[i * 2 + 1];
                         sdl_vertices[i].color.r = r / 255.0f;
                         sdl_vertices[i].color.g = g / 255.0f;
                         sdl_vertices[i].color.b = b / 255.0f;
                         sdl_vertices[i].color.a = a / 255.0f;
                         sdl_vertices[i].tex_coord.x = 0.0f;
                         sdl_vertices[i].tex_coord.y = 0.0f;
+
+                        if (i < 3) {  // Log first 3 vertices
+                            fprintf(stderr, "[SDL3_POLYGON]   vertex[%d]: pos=(%.1f, %.1f) color=(%.2f,%.2f,%.2f,%.2f)\n",
+                                    i, sdl_vertices[i].position.x, sdl_vertices[i].position.y,
+                                    sdl_vertices[i].color.r, sdl_vertices[i].color.g,
+                                    sdl_vertices[i].color.b, sdl_vertices[i].color.a);
+                        }
                     }
 
                     // Create triangle fan indices
                     int* indices = malloc((vertex_count - 2) * 3 * sizeof(int));
-                    for (uint16_t i = 0; i < vertex_count - 2; i++) {
+                    int num_triangles = vertex_count - 2;
+                    for (uint16_t i = 0; i < num_triangles; i++) {
                         indices[i * 3] = 0;
                         indices[i * 3 + 1] = i + 1;
                         indices[i * 3 + 2] = i + 2;
                     }
 
+                    fprintf(stderr, "[SDL3_POLYGON] Triangle fan: %d triangles, %d indices\n",
+                            num_triangles, num_triangles * 3);
+
                     SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
 
                     // Get white texture from backend context if available
                     SDL_Texture* white_texture = (SDL_Texture*)ctx->user_data;
-                    SDL_RenderGeometry(renderer, white_texture, sdl_vertices, vertex_count,
-                                       indices, (vertex_count - 2) * 3);
+                    fprintf(stderr, "[SDL3_POLYGON] Calling SDL_RenderGeometry: renderer=%p texture=%p\n",
+                            (void*)renderer, (void*)white_texture);
+
+                    // Clear any previous SDL errors
+                    SDL_ClearError();
+
+                    // Try rendering without texture first (SDL3 should support this for solid colors)
+                    // NOTE: SDL3's SDL_RenderGeometry returns true (1) on success, false (0) on failure
+                    bool result = SDL_RenderGeometry(renderer, NULL, sdl_vertices, vertex_count,
+                                                      indices, num_triangles * 3);
+
+                    const char* error = SDL_GetError();
+                    if (!result) {
+                        fprintf(stderr, "[SDL3_POLYGON] ERROR: SDL_RenderGeometry failed: result=%d error='%s'\n",
+                                result, error && *error ? error : "(empty)");
+                    } else {
+                        fprintf(stderr, "[SDL3_POLYGON] ✓ SDL_RenderGeometry succeeded!\n");
+                    }
+
                     free(sdl_vertices);
                     free(indices);
                 }
@@ -442,6 +515,17 @@ static void canvas_component_renderer_sdl3(void* backend_ctx, const IRComponent*
                 break;
         }
     }
+
+    // Reset clipping rectangle to full render area
+    SDL_SetRenderClipRect(renderer, NULL);
+
+    // Clear buffer after rendering to prevent polygon accumulation across frames
+    extern kryon_cmd_buf_t* kryon_canvas_get_command_buffer(void);
+    extern void kryon_cmd_buf_clear(kryon_cmd_buf_t* buf);
+    kryon_cmd_buf_t* buf = kryon_canvas_get_command_buffer();
+    if (buf) {
+        kryon_cmd_buf_clear(buf);
+    }
 }
 
 #endif // ENABLE_SDL3
@@ -470,6 +554,19 @@ bool kryon_canvas_plugin_init(void) {
         return false;
     }
 
+    // Register custom event types
+    if (!ir_plugin_register_event_type("canvas", "canvas_draw", 100,
+                                        "Canvas onDraw callback - called during render")) {
+        fprintf(stderr, "[canvas_plugin] Failed to register canvas_draw event\n");
+        return false;
+    }
+
+    if (!ir_plugin_register_event_type("canvas", "canvas_update", 101,
+                                        "Canvas onUpdate callback - called with delta time")) {
+        fprintf(stderr, "[canvas_plugin] Failed to register canvas_update event\n");
+        return false;
+    }
+
     // Register command handlers (keep existing)
     if (!ir_plugin_register_handler(CANVAS_CMD_CIRCLE, handle_canvas_circle)) {
         fprintf(stderr, "[canvas_plugin] Failed to register circle handler\n");
@@ -492,12 +589,17 @@ bool kryon_canvas_plugin_init(void) {
         return false;
     }
 
-    // Register callback bridge
+    // Register callback bridge (optional - only for Nim builds)
+#ifdef KRYON_NIM_BINDINGS
     extern void canvas_nim_callback_bridge(uint32_t component_id);
     if (!ir_plugin_register_callback_bridge(10, canvas_nim_callback_bridge)) {
         fprintf(stderr, "[canvas_plugin] Failed to register callback bridge\n");
         return false;
     }
+    fprintf(stderr, "[canvas_plugin] Registered Nim callback bridge\n");
+#else
+    fprintf(stderr, "[canvas_plugin] Skipping callback bridge (Lua mode - using desktop renderer callbacks)\n");
+#endif
 
     // Set backend capabilities
     IRBackendCapabilities caps = {
@@ -511,6 +613,21 @@ bool kryon_canvas_plugin_init(void) {
         .has_3d_rendering = false
     };
     ir_plugin_set_backend_capabilities(&caps);
+
+    // CRITICAL FIX: Initialize canvas command buffer during plugin init
+    // This ensures the buffer is ready when onDraw callbacks execute
+    extern void kryon_cmd_buf_init(kryon_cmd_buf_t* buf);
+    extern void kryon_canvas_set_command_buffer(kryon_cmd_buf_t* buf);
+
+    static kryon_cmd_buf_t g_global_canvas_buffer;
+    static bool g_buffer_initialized = false;
+
+    if (!g_buffer_initialized) {
+        kryon_cmd_buf_init(&g_global_canvas_buffer);
+        kryon_canvas_set_command_buffer(&g_global_canvas_buffer);
+        g_buffer_initialized = true;
+        fprintf(stderr, "[canvas_plugin] Initialized global canvas command buffer\n");
+    }
 
     fprintf(stderr, "[canvas_plugin] Canvas plugin initialized\n");
     return true;

@@ -755,14 +755,115 @@ void kryon_canvas_arc(kryon_draw_mode_t mode, kryon_fp_t cx, kryon_fp_t cy, kryo
 }
 
 // ============================================================================
+// Transform Stack Implementation
+// ============================================================================
+
+// 2D affine transform: [a, b, c, d, tx, ty]
+// Represents matrix: | a  c  tx |
+//                    | b  d  ty |
+//                    | 0  0  1  |
+typedef struct {
+    float m[6];  // [a, b, c, d, tx, ty]
+} Transform2D;
+
+#define MAX_TRANSFORM_STACK 32
+static Transform2D g_transform_stack[MAX_TRANSFORM_STACK];
+static int g_transform_depth = 0;
+static Transform2D g_current_transform = {{1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f}}; // Identity
+
+// Helper: Multiply two affine transforms (result = t1 * t2)
+static Transform2D transform_multiply(Transform2D t1, Transform2D t2) {
+    Transform2D result;
+    result.m[0] = t1.m[0] * t2.m[0] + t1.m[2] * t2.m[1];           // a
+    result.m[1] = t1.m[1] * t2.m[0] + t1.m[3] * t2.m[1];           // b
+    result.m[2] = t1.m[0] * t2.m[2] + t1.m[2] * t2.m[3];           // c
+    result.m[3] = t1.m[1] * t2.m[2] + t1.m[3] * t2.m[3];           // d
+    result.m[4] = t1.m[0] * t2.m[4] + t1.m[2] * t2.m[5] + t1.m[4]; // tx
+    result.m[5] = t1.m[1] * t2.m[4] + t1.m[3] * t2.m[5] + t1.m[5]; // ty
+    return result;
+}
+
+// Helper: Apply transform to a point
+static void transform_point(Transform2D* t, float* x, float* y) {
+    float px = *x;
+    float py = *y;
+    *x = t->m[0] * px + t->m[2] * py + t->m[4];
+    *y = t->m[1] * px + t->m[3] * py + t->m[5];
+}
+
+void kryon_canvas_origin(void) {
+    // Reset to identity transform
+    g_current_transform.m[0] = 1.0f;
+    g_current_transform.m[1] = 0.0f;
+    g_current_transform.m[2] = 0.0f;
+    g_current_transform.m[3] = 1.0f;
+    g_current_transform.m[4] = 0.0f;
+    g_current_transform.m[5] = 0.0f;
+}
+
+void kryon_canvas_translate(kryon_fp_t x, kryon_fp_t y) {
+    // Create translation transform and multiply
+    Transform2D translate = {{1.0f, 0.0f, 0.0f, 1.0f, (float)x, (float)y}};
+    g_current_transform = transform_multiply(g_current_transform, translate);
+}
+
+void kryon_canvas_rotate(kryon_fp_t angle) {
+    // Create rotation transform and multiply
+    float cos_a = cosf((float)angle);
+    float sin_a = sinf((float)angle);
+    Transform2D rotate = {{cos_a, sin_a, -sin_a, cos_a, 0.0f, 0.0f}};
+    g_current_transform = transform_multiply(g_current_transform, rotate);
+}
+
+void kryon_canvas_scale(kryon_fp_t sx, kryon_fp_t sy) {
+    // Create scale transform and multiply
+    Transform2D scale = {{(float)sx, 0.0f, 0.0f, (float)sy, 0.0f, 0.0f}};
+    g_current_transform = transform_multiply(g_current_transform, scale);
+}
+
+void kryon_canvas_shear(kryon_fp_t kx, kryon_fp_t ky) {
+    // Create shear transform and multiply
+    Transform2D shear = {{1.0f, (float)ky, (float)kx, 1.0f, 0.0f, 0.0f}};
+    g_current_transform = transform_multiply(g_current_transform, shear);
+}
+
+void kryon_canvas_push(void) {
+    // Push current transform to stack
+    if (g_transform_depth < MAX_TRANSFORM_STACK) {
+        g_transform_stack[g_transform_depth++] = g_current_transform;
+    }
+}
+
+void kryon_canvas_pop(void) {
+    // Pop transform from stack
+    if (g_transform_depth > 0) {
+        g_current_transform = g_transform_stack[--g_transform_depth];
+    }
+}
+
+void kryon_canvas_get_transform(kryon_fp_t matrix[6]) {
+    // Get current transform matrix
+    if (matrix) {
+        for (int i = 0; i < 6; i++) {
+            matrix[i] = (kryon_fp_t)g_current_transform.m[i];
+        }
+    }
+}
+
+// ============================================================================
 // Text Rendering
 // ============================================================================
 
 void kryon_canvas_print(const char* text, kryon_fp_t x, kryon_fp_t y) {
     if (!g_canvas_command_buffer || !text) return;
 
-    int16_t ix = (int16_t)(x + g_canvas_offset_x);
-    int16_t iy = (int16_t)(y + g_canvas_offset_y);
+    // Apply current transform to the text position
+    float fx = (float)x;
+    float fy = (float)y;
+    transform_point(&g_current_transform, &fx, &fy);
+
+    int16_t ix = (int16_t)(fx + g_canvas_offset_x);
+    int16_t iy = (int16_t)(fy + g_canvas_offset_y);
 
     kryon_draw_text(g_canvas_command_buffer, text, ix, iy,
                    g_canvas_state.font_id,
@@ -794,51 +895,6 @@ void kryon_canvas_clear_color(uint32_t color) {
                    g_canvas_state.width, g_canvas_state.height, color);
 }
 
-// ============================================================================
-// Transform Operations (Placeholder - to be implemented with matrix system)
-// ============================================================================
-
-void kryon_canvas_origin(void) {
-    // TODO: Reset transform matrix
-}
-
-void kryon_canvas_translate(kryon_fp_t x, kryon_fp_t y) {
-    // TODO: Apply translation to transform matrix
-    (void)x; (void)y;
-}
-
-void kryon_canvas_rotate(kryon_fp_t angle) {
-    // TODO: Apply rotation to transform matrix
-    (void)angle;
-}
-
-void kryon_canvas_scale(kryon_fp_t sx, kryon_fp_t sy) {
-    // TODO: Apply scale to transform matrix
-    (void)sx; (void)sy;
-}
-
-void kryon_canvas_shear(kryon_fp_t kx, kryon_fp_t ky) {
-    // TODO: Apply shear to transform matrix
-    (void)kx; (void)ky;
-}
-
-void kryon_canvas_push(void) {
-    // TODO: Push current transform to stack
-}
-
-void kryon_canvas_pop(void) {
-    // TODO: Pop transform from stack
-}
-
-void kryon_canvas_get_transform(kryon_fp_t matrix[6]) {
-    // TODO: Get current transform matrix
-    if (matrix) {
-        matrix[0] = 1.0f; matrix[1] = 0.0f;
-        matrix[2] = 0.0f; matrix[3] = 1.0f;
-        matrix[4] = 0.0f; matrix[5] = 0.0f;
-    }
-}
-
 void kryon_canvas_resize(uint16_t width, uint16_t height) {
     g_canvas_state.width = width;
     g_canvas_state.height = height;
@@ -850,4 +906,23 @@ void kryon_canvas_shutdown(void) {
 
 kryon_canvas_draw_state_t* kryon_canvas_get_state(void) {
     return &g_canvas_state;
+}
+
+// ============================================================================
+// Text Measurement Functions
+// ============================================================================
+
+kryon_fp_t kryon_canvas_get_text_width(const char* text) {
+    if (!text) return 0;
+
+    // Simple estimation: average character width = font_size * 0.6
+    // This is a rough approximation since we don't have access to actual font metrics
+    size_t char_count = strlen(text);
+    float avg_char_width = g_canvas_state.font_size * 0.6f;
+    return (kryon_fp_t)(char_count * avg_char_width);
+}
+
+kryon_fp_t kryon_canvas_get_text_height(void) {
+    // Text height is approximately the font size
+    return (kryon_fp_t)g_canvas_state.font_size;
 }

@@ -6,6 +6,15 @@ KRYON_ROOT ?= $(HOME)/Projects/kryon
 # Compiler and flags
 CC := gcc
 CFLAGS := -Wall -Wextra -O2 -fPIC -DENABLE_SDL3 -I$(KRYON_ROOT)/ir -I$(KRYON_ROOT)/core/include -Iinclude -I/nix/store/rcyjzcv5f4naqq53lsczm9dqal4bwmws-sdl3-3.2.20-dev/include
+
+# Build mode: Set KRYON_NIM_BINDINGS for Nim builds, unset for Lua builds
+ifdef KRYON_NIM_BINDINGS
+    CFLAGS += -DKRYON_NIM_BINDINGS=1
+else
+    # Lua mode (default) - don't compile Nim bridge
+    CFLAGS += -UKRYON_NIM_BINDINGS
+endif
+
 LDFLAGS := -shared \
 	-L$(KRYON_ROOT)/build -lkryon_ir \
 	-Wl,-rpath,$(KRYON_ROOT)/build \
@@ -47,7 +56,8 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	@echo "Compiling $<..."
 	@$(CC) $(CFLAGS) -c $< -o $@
 
-# Compile Nim bridge to object files (Nim compiles to C and then to .o automatically)
+# Compile Nim bridge to object files (only for Nim builds)
+ifdef KRYON_NIM_BINDINGS
 $(NIM_BRIDGE_SENTINEL): $(NIM_BRIDGE) | $(BUILD_DIR)
 	@echo "Compiling Nim bridge..."
 	@nim c --noMain --noLinking --nimcache:$(BUILD_DIR) \
@@ -56,6 +66,11 @@ $(NIM_BRIDGE_SENTINEL): $(NIM_BRIDGE) | $(BUILD_DIR)
 		--passL:"-L$(KRYON_ROOT)/build -lkryon_ir" \
 		$<
 	@touch $@
+else
+$(NIM_BRIDGE_SENTINEL): | $(BUILD_DIR)
+	@echo "Skipping Nim bridge compilation (Lua mode)"
+	@touch $@
+endif
 
 # Build static library (include all Nim-generated .o files)
 $(LIB_STATIC): $(OBJS) $(NIM_BRIDGE_SENTINEL)
